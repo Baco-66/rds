@@ -128,6 +128,27 @@ class Simple13(app_manager.RyuApp):
             if ip.opcode == arp.ARP_REQUEST:
                 # Verificar se estao a pedir o mac dele (?)
                     if '254' in dst_ip:
+                        '''
+                        # retira o endereco mac de origem e coloca o dele
+                        out_port = in_port
+
+                        ip.src_mac = self.my_ports_to_mac.get(in_port)
+                        ip.dst_mac = src_mac
+                        ip.src_ip = dst_ip
+                        ip.dst_ip = src_ip
+
+                        ip.opcode = arp.ARP_REPLY
+                        
+
+                        actions = [parser.OFPActionOutput(out_port)]
+
+                        out = parser.OFPPacketOut(datapath=datapath, 
+                                                buffer_id= ofproto.OFP_NO_BUFFER,
+                                                in_port=ofproto.OFPP_CONTROLLER, 
+                                                actions=actions, 
+                                                data=msg.data)
+                        datapath.send_msg(out)
+                        '''
                         # retira o endereco mac de origem e coloca o dele
                         out_port = in_port
                         mac = self.my_ports_to_mac.get(in_port)
@@ -140,14 +161,13 @@ class Simple13(app_manager.RyuApp):
                         a = arp.arp(datapath.id, 0x0800, 6, 4, arp.ARP_REPLY, mac, dst_ip, src_mac, src_ip)
                         arp_reply_pkt.add_protocol(a)
 
-                        #arp_reply_pkt.serialize()
+                        arp_reply_pkt.serialize()
 
-                        actions = [parser.OFPActionOutput(out_port)]
 
                         out = parser.OFPPacketOut(datapath=datapath, 
                                                 buffer_id= ofproto.OFP_NO_BUFFER,
                                                 in_port=ofproto.OFPP_CONTROLLER, 
-                                                actions=actions, 
+                                                actions=[parser.OFPActionOutput(out_port)], 
                                                 data=arp_reply_pkt.data)
                         datapath.send_msg(out)
                         
@@ -211,27 +231,7 @@ class Simple13(app_manager.RyuApp):
         # OCDIGO DO ARP ANTIGO
         if prefix is str and prefix in dst_ip:
                         
-                        print("Enviando um pkt_out")
-                        # retira o endereco mac de origem e coloca o dele
-                        out_port = in_port
-
-                        ip.src_mac = self.my_ports_to_mac.get(in_port)
-                        ip.dst_mac = src_mac
-                        ip.src_ip = dst_ip
-                        ip.dst_ip = src_ip
-
-                        ip.opcode = arp.ARP_REPLY
                         
-
-                        actions = [parser.OFPActionOutput(out_port)]
-
-                        out = parser.OFPPacketOut(datapath=datapath, 
-                                                buffer_id= ofproto.OFP_NO_BUFFER,
-                                                in_port=ofproto.OFPP_CONTROLLER, 
-                                                actions=actions, 
-                                                data=msg.data)
-                        datapath.send_msg(out)
-                        print(out)
                         
 
                         
