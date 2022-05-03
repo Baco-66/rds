@@ -25,9 +25,6 @@ class Simple13(app_manager.RyuApp):
                     2:{'192.168.1.10':'00:00:00:00:01:01','192.168.1.11':'00:00:00:00:01:02','192.168.1.12':'00:00:00:00:01:03'},
                     3:{'192.168.2.10':'00:00:00:00:02:01','192.168.2.11':'00:00:00:00:02:02','192.168.2.12':'00:00:00:00:02:03'}}
 
-
-        # O router tem de conhecer os macs das suas interfaces
-        # controlador fazer um features request ao router
         self.my_ports_to_mac = {}
 
 
@@ -36,9 +33,12 @@ class Simple13(app_manager.RyuApp):
         # só depois se mete dinamico
 
         # se o trafico for para ele vem ser in_port
+        self.logger.info("Comecei")
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
+        self.logger.info("Fiz alguma coisa pelo menos")
+        print("Fiz alguma coisa pelo menos")
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -47,7 +47,6 @@ class Simple13(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
-
 
         ofp_parser = datapath.ofproto_parser
         req = ofp_parser.OFPPortDescStatsRequest(datapath)
@@ -64,7 +63,7 @@ class Simple13(app_manager.RyuApp):
             # {4294967294: '76:96:ed:30:67:46', 4: '76:fc:31:71:ac:a7', 1: '76:1f:97:71:84:92', 2: 'b6:72:46:da:68:c2', 3: 'ba:ce:4d:5f:a7:32'}
             # o que é aquele primeiro - porta de lo
             self.my_ports_to_mac[dpid][p.port_no] = p.hw_addr
-            
+
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -83,6 +82,8 @@ class Simple13(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+        self.logger.info("Recebi um pacote")
+        print("revebi um pacote")
         # If you hit this you might want to increase
         # the "miss_send_length" of your switch
         if ev.msg.msg_len < ev.msg.total_len:
@@ -128,6 +129,7 @@ class Simple13(app_manager.RyuApp):
             if ip.opcode == arp.ARP_REQUEST:
                 # Verificar se estao a pedir o mac dele (?)
                     if '254' in dst_ip:
+                        print("entrei")
                         '''
                         # retira o endereco mac de origem e coloca o dele
                         out_port = in_port
@@ -162,7 +164,6 @@ class Simple13(app_manager.RyuApp):
                         arp_reply_pkt.add_protocol(a)
 
                         arp_reply_pkt.serialize()
-
 
                         out = parser.OFPPacketOut(datapath=datapath, 
                                                 buffer_id= ofproto.OFP_NO_BUFFER,
