@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
@@ -21,6 +20,7 @@ class Simple13(app_manager.RyuApp):
         self.subredes = {'192.168.0':1,'192.168.1':2,'192.168.2':3}
         self.message_queue = {}
 
+        # arps vale pouco depois faz-se isto
         self.macs = {1:{'192.168.0.10':'00:00:00:00:00:01','192.168.0.11':'00:00:00:00:00:02','192.168.0.12':'00:00:00:00:00:03'},
                     2:{'192.168.1.10':'00:00:00:00:01:01','192.168.1.11':'00:00:00:00:01:02','192.168.1.12':'00:00:00:00:01:03'},
                     3:{'192.168.2.10':'00:00:00:00:02:01','192.168.2.11':'00:00:00:00:02:02','192.168.2.12':'00:00:00:00:02:03'}}
@@ -28,17 +28,9 @@ class Simple13(app_manager.RyuApp):
         self.my_ports_to_mac = {}
 
 
-        # deixar estatico
-        # depois injetar regras
-        # só depois se mete dinamico
-
-        # se o trafico for para ele vem ser in_port
-        self.logger.info("Comecei")
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        self.logger.info("Fiz alguma coisa pelo menos")
-        print("Fiz alguma coisa pelo menos")
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -59,9 +51,6 @@ class Simple13(app_manager.RyuApp):
         dpid = datapath.id
         self.my_ports_to_mac.setdefault(dpid, {})
         for p in ev.msg.body:
-            # o output é este
-            # {4294967294: '76:96:ed:30:67:46', 4: '76:fc:31:71:ac:a7', 1: '76:1f:97:71:84:92', 2: 'b6:72:46:da:68:c2', 3: 'ba:ce:4d:5f:a7:32'}
-            # o que é aquele primeiro - porta de lo
             self.my_ports_to_mac[dpid][p.port_no] = p.hw_addr
 
 
@@ -82,8 +71,6 @@ class Simple13(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        self.logger.info("Recebi um pacote")
-        print("revebi um pacote")
         # If you hit this you might want to increase
         # the "miss_send_length" of your switch
         if ev.msg.msg_len < ev.msg.total_len:
@@ -100,10 +87,11 @@ class Simple13(app_manager.RyuApp):
         self.routing_table.setdefault(dpid, {})
         self.message_queue.setdefault(dpid, {})
 
-
         pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet) 
+
+
         '''
-        eth = pkt.get_protocol(ethernet.ethernet)
 
         dst = eth.dst
         src = eth.src
@@ -128,115 +116,134 @@ class Simple13(app_manager.RyuApp):
             # verificar qual é o tipo de arp 
             if ip.opcode == arp.ARP_REQUEST:
                 # Verificar se estao a pedir o mac dele (?)
-                    if '254' in dst_ip:
-                        print("entrei")
-                        '''
-                        # retira o endereco mac de origem e coloca o dele
-                        out_port = in_port
+                if '254' in dst_ip:
+                    # retira o endereco mac de origem e coloca o dele
+                    out_port = in_port
+                    mac = self.my_ports_to_mac[datapath.id].get(out_port)
 
-                        ip.src_mac = self.my_ports_to_mac.get(in_port)
-                        ip.dst_mac = src_mac
-                        ip.src_ip = dst_ip
-                        ip.dst_ip = src_ip
+                    arp_reply_pkt = packet.Packet()
 
-                        ip.opcode = arp.ARP_REPLY
-                        
+                    e = ethernet.ethernet(dst=src_mac, src=mac, ethertype=ether_types.ETH_TYPE_ARP)
+                    arp_reply_pkt.add_protocol(e)
 
-                        actions = [parser.OFPActionOutput(out_port)]
+                    a = arp.arp(opcode=arp.ARP_REPLY, src_mac=mac, src_ip=dst_ip, dst_mac=src_mac, dst_ip=src_ip)
+                    arp_reply_pkt.add_protocol(a)
 
-                        out = parser.OFPPacketOut(datapath=datapath, 
-                                                buffer_id= ofproto.OFP_NO_BUFFER,
-                                                in_port=ofproto.OFPP_CONTROLLER, 
-                                                actions=actions, 
-                                                data=msg.data)
-                        datapath.send_msg(out)
-                        '''
-                        # retira o endereco mac de origem e coloca o dele
-                        out_port = in_port
-                        mac = self.my_ports_to_mac.get(in_port)
+                    arp_reply_pkt.serialize()
 
-                        arp_reply_pkt = packet.Packet()
+                    out = parser.OFPPacketOut(datapath=datapath, 
+                                            buffer_id= ofproto.OFP_NO_BUFFER,
+                                            in_port=ofproto.OFPP_CONTROLLER, 
+                                            actions=[parser.OFPActionOutput(out_port)], 
+                                            data=arp_reply_pkt.data)
+                    datapath.send_msg(out)
+                else:
+                    for prefix in self.subredes:
+                        if prefix is str and prefix not in src_ip and prefix in dst_ip:
+                            out_port = in_port
+                            mac = self.my_ports_to_mac[datapath.id].get(out_port)
 
-                        e = ethernet.ethernet(src_mac, mac, ether_types.ETH_TYPE_ARP)
-                        arp_reply_pkt.add_protocol(e)
+                            arp_reply_pkt = packet.Packet()
 
-                        a = arp.arp(datapath.id, 0x0800, 6, 4, arp.ARP_REPLY, mac, dst_ip, src_mac, src_ip)
-                        arp_reply_pkt.add_protocol(a)
+                            e = ethernet.ethernet(dst=src_mac, src=mac, ethertype=ether_types.ETH_TYPE_ARP)
+                            arp_reply_pkt.add_protocol(e)
 
-                        arp_reply_pkt.serialize()
+                            a = arp.arp(opcode=arp.ARP_REPLY, src_mac=mac, src_ip=dst_ip, dst_mac=src_mac, dst_ip=src_ip)
+                            arp_reply_pkt.add_protocol(a)
 
-                        out = parser.OFPPacketOut(datapath=datapath, 
-                                                buffer_id= ofproto.OFP_NO_BUFFER,
-                                                in_port=ofproto.OFPP_CONTROLLER, 
-                                                actions=[parser.OFPActionOutput(out_port)], 
-                                                data=arp_reply_pkt.data)
-                        datapath.send_msg(out)
-                        
+                            arp_reply_pkt.serialize()
+
+                            out = parser.OFPPacketOut(datapath=datapath, 
+                                                    buffer_id= ofproto.OFP_NO_BUFFER,
+                                                    in_port=ofproto.OFPP_CONTROLLER, 
+                                                    actions=[parser.OFPActionOutput(out_port)], 
+                                                    data=arp_reply_pkt.data)
+                            datapath.send_msg(out)
+
             return
                 
-        '''  
+        
         elif ip := pkt.get_protocol(ipv4.ipv4): 
             src_ip = ip.src
             dst_ip = ip.dst
-            # pacote ICMP esta dentro do IP
-            #if ping := pkt.get_protocol(icmp.icmp):
-            #    pass
 
-                # a destination esta na parte do IP
-                # não é preciso ver isto
-
-
-                # se nao for para mim dou foward
-                # se for para mim responder (mais tarde)
             self.routing_table[dpid][src_ip] = in_port
 
-            
-            for prefix in self.subredes:
-                if prefix is str and prefix in dst_ip:
-                    # retira o endereco mac de origem e coloca o dele
-                    out_port = self.subredes.get(prefix)
+            if '254' in dst_ip:
+                # retira o endereco mac de origem e coloca o dele
+                out_port = in_port
+                mac = self.my_ports_to_mac[datapath.id].get(out_port)
 
-                    eth.src = self.my_ports_to_mac.get(out_port)
+                eth.src = mac
+                eth.dst = self.macs.get(dpid).get(src_ip)
 
-                    eth.dst = self.macs.get(dpid).get(dst_ip)
+                ip.src = dst_ip
+                ip.dst = src_ip
 
-                    break
+                r = pkt.get_protocol(icmp.icmp)
+                r.type_= icmp.ICMP_ECHO_REPLY
 
-            
-            
-            
-            if dst_ip in self.routing_table[dpid]:
-                out_port = self.routing_table[dpid][dst_ip]
+                pkt.serialize()
+
+                out = parser.OFPPacketOut(datapath=datapath, 
+                                        buffer_id= ofproto.OFP_NO_BUFFER,
+                                        in_port=ofproto.OFPP_CONTROLLER, 
+                                        actions=[parser.OFPActionOutput(out_port)], 
+                                        data=pkt.data)
+                datapath.send_msg(out)
+                '''
+                out_port = in_port
+                mac = self.my_ports_to_mac[datapath.id].get(out_port)
+
+                reply_pkt = packet.Packet()
+
+                e = ethernet.ethernet(dst=self.macs.get(dpid).get(src_ip), src=mac, ethertype=ether_types.ETH_TYPE_IP)
+                reply_pkt.add_protocol(e)
+
+                i = ipv4.ipv4(proto=ip.proto ,src=dst_ip, dst=src_ip)
+                reply_pkt.add_protocol(i)
+
+                r = icmp.icmp(type_=icmp.ICMP_ECHO_REPLY)
+                reply_pkt.add_protocol(r)
+
+                reply_pkt.serialize()
+
+                out = parser.OFPPacketOut(datapath=datapath, 
+                                        buffer_id= ofproto.OFP_NO_BUFFER,
+                                        in_port=ofproto.OFPP_CONTROLLER, 
+                                        actions=[parser.OFPActionOutput(out_port)], 
+                                        data=reply_pkt.data)
+                datapath.send_msg(out)
+                '''
+
             else:
-                out_port = ofproto.OFPP_FLOOD
+                out_port = None
+                for prefix in self.subredes:
+                    if dst_ip.startswith(prefix):
+                        # retira o endereco mac de origem e coloca o dele
+                        out_port = self.subredes.get(prefix)
 
-            
-
-        if out_port == None:
-            return # ou discarta o pacote no switch
- 
-        actions = [parser.OFPActionOutput(out_port)]
-        
-        #data = None
-        #if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-        data = msg.data
-
-        out = parser.OFPPacketOut(datapath=datapath, 
-                                  buffer_id=msg.buffer_id,
-                                  in_port=in_port, 
-                                  actions=actions, 
-                                  data=data)
-        datapath.send_msg(out)
+                        eth.src = self.my_ports_to_mac[datapath.id].get(out_port)
+                        eth.dst = self.macs.get(out_port).get(dst_ip)
 
 
-        # OCDIGO DO ARP ANTIGO
-        if prefix is str and prefix in dst_ip:
+                        break
+                
+                if out_port == None:
+                    print("Não encontrou este endereço na tabela")
+                    return # ou discarta o pacote no switc
+
+                pkt.serialize()
+
+                out = parser.OFPPacketOut(datapath=datapath, 
+                                        buffer_id= ofproto.OFP_NO_BUFFER,
+                                        in_port=ofproto.OFPP_CONTROLLER, 
+                                        actions=[parser.OFPActionOutput(out_port)], 
+                                        data=pkt.data)
+                datapath.send_msg(out)
+                # para alem disto definir o flow mod
                         
-                        
-                        
 
-                        
-        '''
 
         
         
